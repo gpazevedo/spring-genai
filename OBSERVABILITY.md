@@ -6,7 +6,7 @@ This application uses OpenTelemetry (OTel) to export **traces**, **metrics**, an
 
 ```text
                               ┌──▶ Jaeger      (traces)
-App ──OTLP──▶ OTel Collector ─┼──▶ Prometheus  (metrics)
+App ──OTLP──▶ OTel Collector ─┼◀── Prometheus  (metrics, scrapes collector)
                               └──▶ Loki        (logs)
                                        ▲
                                    Grafana  (unified dashboards)
@@ -28,8 +28,8 @@ The application sends all telemetry to an **OpenTelemetry Collector**, which rou
 
 | Property | Description |
 |---|---|
-| `management.opentelemetry.tracing.export.otlp.endpoint` | OTLP HTTP endpoint for traces |
-| `management.otlp.metrics.export.url` | OTLP HTTP endpoint for metrics |
+| `management.opentelemetry.tracing.export.otlp.endpoint` | OTLP HTTP endpoint for traces (defaults to `http://localhost:4318/v1/traces`, overridable via `OTEL_EXPORTER_OTLP_ENDPOINT`) |
+| `management.otlp.metrics.export.url` | OTLP HTTP endpoint for metrics (defaults to `http://localhost:4318/v1/metrics`, overridable via `OTEL_EXPORTER_OTLP_ENDPOINT`) |
 | `management.tracing.sampling.probability` | Sampling rate (`1.0` = 100%, `0.1` = 10%) |
 
 ### logback-spring.xml
@@ -75,14 +75,9 @@ docker compose up -d
 ### 2. Send a request
 
 ```bash
-# Synchronous
-curl -X POST http://localhost:8080/chat \
+curl -N -X POST http://localhost:8080/invocations \
   -H "Content-Type: application/json" \
-  -d '{"message": "Hello, tell me a joke"}'
-
-# Streaming
-curl -N -G http://localhost:8080/chat/stream \
-  --data-urlencode "message=Hello, tell me a joke"
+  -d '{"input": {"prompt": "Hello, tell me a joke"}}'
 ```
 
 ### 3. Verify traces

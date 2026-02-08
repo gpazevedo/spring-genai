@@ -18,7 +18,7 @@ repositories {
 	mavenCentral()
 }
 
-extra["springAiVersion"] = "1.1.2"
+extra["springAiVersion"] = "2.0.0-M2"
 
 dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-actuator")
@@ -26,6 +26,7 @@ dependencies {
 	implementation("io.opentelemetry.instrumentation:opentelemetry-logback-appender-1.0:2.14.0-alpha")
 	implementation("org.springframework.boot:spring-boot-starter-web")
 	implementation("org.springframework.boot:spring-boot-starter-json")
+	implementation("com.nimbusds:nimbus-jose-jwt:10.3")
 	implementation("org.springframework.ai:spring-ai-advisors-vector-store")
 	implementation("org.springframework.ai:spring-ai-starter-model-bedrock")
 	implementation("org.springframework.ai:spring-ai-starter-model-bedrock-converse")

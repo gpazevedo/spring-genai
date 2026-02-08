@@ -35,3 +35,10 @@ out/
 
 ### VS Code ###
 .vscode/
+
+### Terraform ###
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfplan
+tfplan
