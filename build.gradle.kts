@@ -23,6 +23,7 @@ extra["springAiVersion"] = "1.1.2"
 dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-actuator")
 	implementation("org.springframework.boot:spring-boot-starter-opentelemetry")
+	implementation("io.opentelemetry.instrumentation:opentelemetry-logback-appender-1.0:2.14.0-alpha")
 	implementation("org.springframework.boot:spring-boot-starter-web")
 	implementation("org.springframework.boot:spring-boot-starter-json")
 	implementation("org.springframework.ai:spring-ai-advisors-vector-store")
