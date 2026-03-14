@@ -8,6 +8,11 @@ output "runtime_name" {
   value       = aws_bedrockagentcore_agent_runtime.extended_chat.agent_runtime_name
 }
 
+output "runtime_id" {
+  description = "AgentCore Runtime ID (name + unique suffix)"
+  value       = aws_bedrockagentcore_agent_runtime.extended_chat.agent_runtime_id
+}
+
 output "runtime_arn" {
   description = "ARN of the deployed AgentCore Runtime"
   value       = aws_bedrockagentcore_agent_runtime.extended_chat.agent_runtime_arn

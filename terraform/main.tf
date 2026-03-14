@@ -3,7 +3,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 6.31.0"
+      version = ">= 6.36.0"
     }
   }
 }
@@ -16,12 +16,20 @@ provider "aws" {
 data "aws_caller_identity" "current" {}
 
 locals {
-  memory_name_clean = "extendedChatClientMemory"
+  memory_name_clean  = "extendedChatClientMemory"
   unique_memory_name = "${local.memory_name_clean}_${data.aws_caller_identity.current.account_id}"
-  runtime_name = "spring_genai_${data.aws_caller_identity.current.account_id}"
-  service_name = "spring-genai"
+  runtime_name       = "spring_genai_${data.aws_caller_identity.current.account_id}"
+  service_name       = "spring-genai"
 
-  container_uri = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com/spring-genai:latest"
+  container_uri = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com/spring-genai-${data.aws_caller_identity.current.account_id}:latest"
+
+  # AgentCore appends a random suffix to runtime_name to form the runtime_id.
+  # Update var.runtime_id_suffix if the runtime is ever destroyed and recreated.
+  runtime_id           = "${local.runtime_name}-${var.runtime_id_suffix}"
+  runtime_arn          = "arn:aws:bedrock-agentcore:${var.aws_region}:${data.aws_caller_identity.current.account_id}:runtime/${local.runtime_id}"
+  # Endpoint ARN is what cloud.resource_id must use for the AgentCore agents dashboard
+  runtime_endpoint_arn = "${local.runtime_arn}/runtime-endpoint/DEFAULT"
+  native_log_group     = "/aws/bedrock-agentcore/runtimes/${local.runtime_id}-DEFAULT"
 }
 
 # Cognito User Pool for OAuth authentication
@@ -188,25 +196,28 @@ resource "aws_bedrockagentcore_agent_runtime" "extended_chat" {
   }
 
   environment_variables = {
-    AGENTCORE_MEMORY_ID         = aws_bedrockagentcore_memory.agent_memory.id
-    SPRING_PROFILES_ACTIVE      = "production"
-    AGENT_OBSERVABILITY_ENABLED = "true"
-    OTEL_RESOURCE_ATTRIBUTES    = "service.name=${local.service_name}"
+    AGENTCORE_MEMORY_ID    = aws_bedrockagentcore_memory.agent_memory.id
+    SPRING_PROFILES_ACTIVE = "production"
+
+    # Required for GenAI Observability dashboard to identify this as an AgentCore agent
+    OTEL_RESOURCE_ATTRIBUTES = join(",", [
+      "service.name=${local.service_name}",
+      "aws.log.group.names=${local.native_log_group}",
+      "cloud.resource_id=${local.runtime_endpoint_arn}",
+    ])
+
     OTEL_EXPORTER_OTLP_PROTOCOL = "http/protobuf"
 
-    # ADOT Java agent: handles SigV4 signing for direct CloudWatch/X-Ray export
-    JAVA_TOOL_OPTIONS = "-javaagent:/app/aws-opentelemetry-agent.jar"
+    # Traces → X-Ray OTLP endpoint (SigV4-signed by ADOT agent)
+    OTEL_TRACES_EXPORTER               = "otlp"
+    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT = "https://xray.${var.aws_region}.amazonaws.com/v1/traces"
 
-    # Traces → X-Ray OTLP endpoint
-    OTEL_TRACES_EXPORTER                  = "otlp"
-    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT    = "https://xray.${var.aws_region}.amazonaws.com/v1/traces"
+    # Logs → CloudWatch Logs OTLP endpoint → native AgentCore log group
+    OTEL_LOGS_EXPORTER             = "otlp"
+    OTEL_EXPORTER_OTLP_LOGS_ENDPOINT = "https://logs.${var.aws_region}.amazonaws.com/v1/logs"
+    OTEL_EXPORTER_OTLP_LOGS_HEADERS  = "x-aws-log-group=${local.native_log_group},x-aws-log-stream=otel-rt-logs"
 
-    # Logs → CloudWatch Logs OTLP endpoint
-    OTEL_LOGS_EXPORTER                    = "otlp"
-    OTEL_EXPORTER_OTLP_LOGS_ENDPOINT      = "https://logs.${var.aws_region}.amazonaws.com/v1/logs"
-    OTEL_EXPORTER_OTLP_LOGS_HEADERS        = "x-aws-log-group=/aws/bedrock-agentcore/runtimes/${local.service_name},x-aws-log-stream=runtime-logs"
-
-    # Metrics: no direct CloudWatch OTLP endpoint; AgentCore collects built-in metrics
+    # Metrics: no direct CloudWatch OTLP endpoint
     OTEL_METRICS_EXPORTER = "none"
 
     # Disable Application Signals to avoid duplicate instrumentation

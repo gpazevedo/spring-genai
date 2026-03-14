@@ -1,6 +1,6 @@
 # Spring GenAI
 
-A Spring AI chat agent built for [Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/). It uses Claude 3.5 Sonnet via AWS Bedrock Converse API and exports traces, metrics, and logs through OpenTelemetry.
+A Spring AI chat agent built for [Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/). It uses Amazon Nova Lite via AWS Bedrock Converse API and exports traces and logs through the ADOT Java agent to X-Ray and CloudWatch Logs.
 
 ## Prerequisites
 
@@ -8,7 +8,7 @@ A Spring AI chat agent built for [Amazon Bedrock AgentCore](https://aws.amazon.c
 - Docker
 - AWS CLI configured with valid credentials
 - Terraform >= 1.14.4 (for AgentCore deployment)
-- AWS account with Bedrock model access enabled for `us.anthropic.claude-3-5-sonnet-20241022-v2:0`
+- AWS account with Bedrock model access enabled for `us.amazon.nova-lite-v1:0`
 
 ## Project Structure
 
@@ -54,6 +54,7 @@ This starts:
 export AWS_ACCESS_KEY_ID=<your-key>
 export AWS_SECRET_ACCESS_KEY=<your-secret>
 export AWS_REGION=us-east-1
+export SPRING_PROFILES_ACTIVE=local   # activates application-local.properties (OTLP → localhost:4318)
 
 ./gradlew bootRun
 ```
@@ -117,7 +118,8 @@ This script:
 ### 2. Deploy infrastructure with Terraform
 
 ```bash
-./deploy.sh
+./deploy.sh           # normal deploy (update runtime in-place)
+./deploy.sh --clean   # delete and recreate the runtime (kills all active sessions)
 ```
 
 This provisions:
@@ -127,6 +129,7 @@ This provisions:
 - **IAM Role** — permissions for Bedrock model invocation, ECR pull, CloudWatch, X-Ray
 - **AgentCore Memory** — conversation state (30-day expiry)
 - **X-Ray** — sampling rules, trace groups with anomaly detection, Transaction Search
+- **CloudWatch log deliveries** — APPLICATION_LOGS and TRACES vended to CloudWatch/X-Ray
 
 After deployment, note the Terraform outputs:
 
@@ -218,18 +221,44 @@ curl -N -X POST "$AGENTCORE_URL" \
 **Check runtime status:**
 
 ```bash
-RUNTIME_ID=$(cd terraform && terraform output -raw runtime_name)
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+RUNTIME_ID=$(cd terraform && terraform output -raw runtime_id)
 
 aws bedrock-agentcore-control get-agent-runtime \
   --agent-runtime-id $RUNTIME_ID \
   --region $REGION
 ```
 
-**Observability** is available in the AWS Console:
+**Tail application logs:**
 
-- **CloudWatch Logs** — `/aws/bedrock-agentcore/runtimes/<agent-id>/runtime-logs`
-- **X-Ray traces** — CloudWatch > X-Ray > Traces (filtered by service `spring-genai`)
-- **Metrics** — CloudWatch > Metrics > `bedrock-agentcore` namespace
+```bash
+RUNTIME_ID=$(cd terraform && terraform output -raw runtime_id)
+
+# Container stdout/stderr
+aws logs tail "/aws/bedrock-agentcore/runtimes/${RUNTIME_ID}-DEFAULT" --follow
+
+# OTEL structured logs (JSON, stream written by ADOT agent)
+aws logs tail "/aws/bedrock-agentcore/runtimes/${RUNTIME_ID}-DEFAULT" \
+  --log-stream-names otel-rt-logs --follow
+```
+
+**AWS Console — Observability URLs:**
+
+```bash
+RUNTIME_ID=$(cd terraform && terraform output -raw runtime_id)
+REGION=us-east-1
+
+LOG_GROUP=$(python3 -c "import urllib.parse; print(urllib.parse.quote('/aws/bedrock-agentcore/runtimes/${RUNTIME_ID}-DEFAULT', safe=''))")
+
+echo "GenAI Observability (AgentCore agents):"
+echo "  https://${REGION}.console.aws.amazon.com/cloudwatch/home?region=${REGION}#/gen-ai-observability/agent-core/agents"
+
+echo "X-Ray Traces (spring-genai):"
+echo "  https://${REGION}.console.aws.amazon.com/xray/home?region=${REGION}#/traces?filter=service%28%22spring-genai%22%29"
+
+echo "CloudWatch Logs (container + OTEL):"
+echo "  https://${REGION}.console.aws.amazon.com/cloudwatch/home?region=${REGION}#logsV2:log-groups/log-group/${LOG_GROUP}"
+```
 
 ## API Contract
 
@@ -282,7 +311,7 @@ Key properties in `application.properties`:
 |----------|---------|---------|
 | OTLP endpoint | `http://localhost:4318` | `OTEL_EXPORTER_OTLP_ENDPOINT` env var |
 | Bedrock region | `us-east-1` | `spring.ai.bedrock.aws.region` |
-| Model | Claude 3.5 Sonnet v2 | `spring.ai.bedrock.converse.chat.options.model` |
+| Model | Amazon Nova Lite | `spring.ai.bedrock.converse.chat.options.model` |
 | Temperature | 0.7 | `spring.ai.bedrock.converse.chat.options.temperature` |
 | Max tokens | 1024 | `spring.ai.bedrock.converse.chat.options.max-tokens` |
 | Trace sampling | 100% | `management.tracing.sampling.probability` |

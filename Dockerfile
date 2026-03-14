@@ -1,29 +1,45 @@
+# Stage 1: Extract Spring Boot layers from the pre-built jar
+FROM amazoncorretto:25-alpine AS builder
+
+WORKDIR /build
+
+COPY build/libs/spring-genai-*SNAPSHOT.jar app.jar
+
+# Extract layers: dependencies, spring-boot-loader, snapshot-dependencies, application
+RUN java -Djarmode=tools -jar app.jar extract --layers --launcher --destination extracted
+
+# Download ADOT Java agent (cached here, not re-downloaded on app changes)
+ADD https://github.com/aws-observability/aws-otel-java-instrumentation/releases/download/v2.23.0/aws-opentelemetry-agent.jar \
+    /build/aws-opentelemetry-agent.jar
+
+
+# Stage 2: Minimal runtime image
 FROM amazoncorretto:25-alpine
 
-# Create non-root user
 RUN addgroup -S appuser && adduser -S appuser -G appuser
 
 WORKDIR /app
 
-# Download ADOT Java agent for SigV4-signed OTLP export to CloudWatch/X-Ray
-# Activated only in AgentCore via JAVA_TOOL_OPTIONS env var in Terraform
-ADD https://github.com/aws-observability/aws-otel-java-instrumentation/releases/download/v2.23.0/aws-opentelemetry-agent.jar /app/aws-opentelemetry-agent.jar
+# Copy ADOT agent
+COPY --from=builder /build/aws-opentelemetry-agent.jar ./
 
-# Copy the jar file
-COPY build/libs/spring-genai-*SNAPSHOT.jar app.jar
+# Copy Spring Boot layers in order of change frequency (least → most)
+COPY --from=builder /build/extracted/dependencies/ ./
+COPY --from=builder /build/extracted/spring-boot-loader/ ./
+COPY --from=builder /build/extracted/snapshot-dependencies/ ./
+COPY --from=builder /build/extracted/application/ ./
 
-# Change ownership
 RUN chown -R appuser:appuser /app
 
-# Switch to non-root user
 USER appuser
 
-# Expose port
 EXPOSE 8080
 
-ENV AGENT_OBSERVABILITY_ENABLED=true
-ENV OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
-ENV OTEL_RESOURCE_ATTRIBUTES=service.name=spring-genai
+# Load ADOT Java agent; disable log bytecode instrumentation (logback OTEL appender handles logs)
+ENV JAVA_TOOL_OPTIONS="-javaagent:/app/aws-opentelemetry-agent.jar \
+  -Dotel.instrumentation.logback-appender.enabled=false \
+  -Dotel.instrumentation.java-util-logging.enabled=false"
 
-# Run the application
-ENTRYPOINT ["java", "-jar", "app.jar"]
+ENV OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+
+ENTRYPOINT ["java", "org.springframework.boot.loader.launch.JarLauncher"]

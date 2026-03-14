@@ -1,6 +1,6 @@
 plugins {
 	java
-	id("org.springframework.boot") version "4.0.2"
+	id("org.springframework.boot") version "4.0.3"
 	id("io.spring.dependency-management") version "1.1.7"
 }
 
@@ -22,7 +22,6 @@ extra["springAiVersion"] = "2.0.0-M2"
 
 dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-actuator")
-	implementation("org.springframework.boot:spring-boot-starter-opentelemetry")
 	implementation("io.opentelemetry.instrumentation:opentelemetry-logback-appender-1.0:2.14.0-alpha")
 	implementation("org.springframework.boot:spring-boot-starter-web")
 	implementation("org.springframework.boot:spring-boot-starter-json")

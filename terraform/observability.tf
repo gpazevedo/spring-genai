@@ -64,7 +64,7 @@ resource "aws_cloudwatch_log_resource_policy" "xray_transaction_search" {
         }
         Action = "logs:PutLogEvents"
         Resource = [
-          "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:aws/spans:*",
+          "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/spans:*",
           "arn:aws:logs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/application-signals/data:*"
         ]
         Condition = {
@@ -78,6 +78,95 @@ resource "aws_cloudwatch_log_resource_policy" "xray_transaction_search" {
       }
     ]
   })
+}
+
+# -----------------------------------------------------------------------------
+# Transaction Search Setup (one-time)
+#
+# There is NO native Terraform resource for:
+#   - aws xray update-trace-segment-destination
+#   - aws xray update-indexing-rule
+# These are account-level settings configured via CLI only.
+#
+# This null_resource runs the CLI commands once. To re-run, taint it:
+#   terraform taint 'null_resource.xray_transaction_search_setup'
+# -----------------------------------------------------------------------------
+resource "aws_cloudwatch_log_group" "otel_logs" {
+  name              = "/aws/bedrock-agentcore/runtimes/${local.runtime_name}"
+  retention_in_days = 30
+
+  tags = {
+    Environment = var.environment
+    Service     = local.service_name
+  }
+}
+
+resource "aws_cloudwatch_log_stream" "otel_logs" {
+  name           = "runtime-logs"
+  log_group_name = aws_cloudwatch_log_group.otel_logs.name
+}
+
+# -----------------------------------------------------------------------------
+# AgentCore Vended Log Delivery: APPLICATION_LOGS
+#
+# Registers the runtime as a log delivery source so AgentCore can write
+# structured request/response payload logs to CloudWatch Logs.
+# This populates the "Logs" tab in the GenAI Observability agents dashboard.
+# -----------------------------------------------------------------------------
+resource "aws_cloudwatch_log_group" "vended_app_logs" {
+  name              = "/aws/vendedlogs/bedrock-agentcore/${aws_bedrockagentcore_agent_runtime.extended_chat.agent_runtime_id}"
+  retention_in_days = 30
+
+  tags = {
+    Environment = var.environment
+    Service     = local.service_name
+  }
+}
+
+resource "aws_cloudwatch_log_delivery_source" "runtime_app_logs" {
+  name         = "${local.service_name}-${var.runtime_id_suffix}-app-logs"
+  log_type     = "APPLICATION_LOGS"
+  resource_arn = aws_bedrockagentcore_agent_runtime.extended_chat.agent_runtime_arn
+}
+
+resource "aws_cloudwatch_log_delivery_destination" "runtime_app_logs" {
+  name = "${local.service_name}-${var.runtime_id_suffix}-app-logs"
+
+  delivery_destination_configuration {
+    destination_resource_arn = aws_cloudwatch_log_group.vended_app_logs.arn
+  }
+}
+
+resource "aws_cloudwatch_log_delivery" "runtime_app_logs" {
+  delivery_source_name     = aws_cloudwatch_log_delivery_source.runtime_app_logs.name
+  delivery_destination_arn = aws_cloudwatch_log_delivery_destination.runtime_app_logs.arn
+}
+
+# -----------------------------------------------------------------------------
+# AgentCore Vended Log Delivery: TRACES
+#
+# Registers the runtime as a trace delivery source to X-Ray.
+# This is the programmatic equivalent of "Enable Tracing" in the AgentCore
+# console (Agents → select agent → Tracing pane → Enable).
+# Spans appear in the aws/spans log group via Transaction Search.
+# -----------------------------------------------------------------------------
+resource "aws_cloudwatch_log_delivery_source" "runtime_traces" {
+  name         = "${local.service_name}-${var.runtime_id_suffix}-traces"
+  log_type     = "TRACES"
+  resource_arn = aws_bedrockagentcore_agent_runtime.extended_chat.agent_runtime_arn
+}
+
+resource "aws_cloudwatch_log_delivery_destination" "runtime_traces" {
+  name                      = "${local.service_name}-${var.runtime_id_suffix}-traces"
+  delivery_destination_type = "XRAY"
+}
+
+resource "aws_cloudwatch_log_delivery" "runtime_traces" {
+  delivery_source_name     = aws_cloudwatch_log_delivery_source.runtime_traces.name
+  delivery_destination_arn = aws_cloudwatch_log_delivery_destination.runtime_traces.arn
+
+  # Sequential creation required to avoid concurrency issues with deliveries
+  depends_on = [aws_cloudwatch_log_delivery.runtime_app_logs]
 }
 
 # -----------------------------------------------------------------------------
