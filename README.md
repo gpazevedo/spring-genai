@@ -1,6 +1,6 @@
 # Spring GenAI
 
-A Spring AI chat agent built for [Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/). It uses Claude 3.5 Sonnet via AWS Bedrock Converse API and exports traces, metrics, and logs through OpenTelemetry.
+A Spring AI chat agent built for [Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/). It uses Amazon Nova Lite via AWS Bedrock Converse API and exports traces and logs through the ADOT Java agent to X-Ray and CloudWatch Logs.
 
 ## Prerequisites
 
@@ -8,12 +8,13 @@ A Spring AI chat agent built for [Amazon Bedrock AgentCore](https://aws.amazon.c
 - Docker
 - AWS CLI configured with valid credentials
 - Terraform >= 1.14.4 (for AgentCore deployment)
-- AWS account with Bedrock model access enabled for `us.anthropic.claude-3-5-sonnet-20241022-v2:0`
+- AWS account with Bedrock model access enabled for `us.amazon.nova-lite-v1:0`
 
 ## Project Structure
 
 ```text
 src/main/java/com/gpazevedo/spring_genai/
+  SpringGenaiApplication.java  # Spring Boot entry point
   InvocationsController.java   # POST /invocations — SSE streaming chat (AgentCore contract)
   PingController.java          # GET /ping — health check (AgentCore contract)
   InvocationRequest.java       # Request model: {"input": {"prompt": "..."}}
@@ -40,13 +41,13 @@ docker compose up -d
 
 This starts:
 
-| Service        | URL                    | Purpose          |
-|----------------|------------------------|------------------|
-| OTel Collector | localhost:4318 (HTTP)  | Receives telemetry |
-| Jaeger         | <http://localhost:16686> | Traces           |
-| Prometheus     | <http://localhost:9090>  | Metrics          |
-| Loki           | <http://localhost:3100>  | Logs             |
-| Grafana        | <http://localhost:3000>  | Dashboards (admin/admin) |
+| Service | URL | Purpose |
+| --- | --- | --- |
+| OTel Collector | localhost:4318 (HTTP) | Receives telemetry |
+| Jaeger | <http://localhost:16686> | Traces |
+| Prometheus | <http://localhost:9090> | Metrics |
+| Loki | <http://localhost:3100> | Logs |
+| Grafana | <http://localhost:3000> | Dashboards (admin/admin) |
 
 ### 3. Run the application
 
@@ -54,6 +55,7 @@ This starts:
 export AWS_ACCESS_KEY_ID=<your-key>
 export AWS_SECRET_ACCESS_KEY=<your-secret>
 export AWS_REGION=us-east-1
+export SPRING_PROFILES_ACTIVE=local   # activates application-local.properties (OTLP → localhost:4318)
 
 ./gradlew bootRun
 ```
@@ -117,7 +119,8 @@ This script:
 ### 2. Deploy infrastructure with Terraform
 
 ```bash
-./deploy.sh
+./deploy.sh           # normal deploy (update runtime in-place)
+./deploy.sh --clean   # delete and recreate the runtime (kills all active sessions); automatically syncs runtime_id_suffix afterward
 ```
 
 This provisions:
@@ -127,14 +130,21 @@ This provisions:
 - **IAM Role** — permissions for Bedrock model invocation, ECR pull, CloudWatch, X-Ray
 - **AgentCore Memory** — conversation state (30-day expiry)
 - **X-Ray** — sampling rules, trace groups with anomaly detection, Transaction Search
+- **CloudWatch log deliveries** — APPLICATION_LOGS and TRACES vended to CloudWatch/X-Ray
 
 After deployment, note the Terraform outputs:
 
 ```text
-cognito_user_pool_id = "us-east-1_xxxxxxx"
-cognito_client_id    = "xxxxxxxxxxxxxxxxxxxxxxxxxx"
-runtime_name         = "spring_genai_123456789012"
-runtime_arn          = "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/spring_genai_123456789012-xxxxxxxxxx"
+cognito_user_pool_id     = "us-east-1_xxxxxxx"
+cognito_client_id        = "xxxxxxxxxxxxxxxxxxxxxxxxxx"
+memory_id                = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+runtime_name             = "spring_genai_123456789012"
+runtime_id               = "spring_genai_123456789012-xxxxxxxxxx"
+runtime_arn              = "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/spring_genai_123456789012-xxxxxxxxxx"
+container_uri            = "123456789012.dkr.ecr.us-east-1.amazonaws.com/spring-genai-123456789012:latest"
+xray_group_arn           = "arn:aws:xray:us-east-1:123456789012:group/spring-genai-production"
+xray_sampling_rule_name  = "spring-genai-production"
+xray_indexing_percentage = 100
 ```
 
 ### 3. Test the deployed agent
@@ -218,23 +228,49 @@ curl -N -X POST "$AGENTCORE_URL" \
 **Check runtime status:**
 
 ```bash
-RUNTIME_ID=$(cd terraform && terraform output -raw runtime_name)
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+RUNTIME_ID=$(cd terraform && terraform output -raw runtime_id)
 
 aws bedrock-agentcore-control get-agent-runtime \
   --agent-runtime-id $RUNTIME_ID \
   --region $REGION
 ```
 
-**Observability** is available in the AWS Console:
+**Tail application logs:**
 
-- **CloudWatch Logs** — `/aws/bedrock-agentcore/runtimes/<agent-id>/runtime-logs`
-- **X-Ray traces** — CloudWatch > X-Ray > Traces (filtered by service `spring-genai`)
-- **Metrics** — CloudWatch > Metrics > `bedrock-agentcore` namespace
+```bash
+RUNTIME_ID=$(cd terraform && terraform output -raw runtime_id)
+
+# Container stdout/stderr
+aws logs tail "/aws/bedrock-agentcore/runtimes/${RUNTIME_ID}-DEFAULT" --follow
+
+# OTEL structured logs (JSON, stream written by ADOT agent)
+aws logs tail "/aws/bedrock-agentcore/runtimes/${RUNTIME_ID}-DEFAULT" \
+  --log-stream-names otel-rt-logs --follow
+```
+
+**AWS Console — Observability URLs:**
+
+```bash
+RUNTIME_ID=$(cd terraform && terraform output -raw runtime_id)
+REGION=us-east-1
+
+LOG_GROUP=$(python3 -c "import urllib.parse; print(urllib.parse.quote('/aws/bedrock-agentcore/runtimes/${RUNTIME_ID}-DEFAULT', safe=''))")
+
+echo "GenAI Observability (AgentCore agents):"
+echo "  https://${REGION}.console.aws.amazon.com/cloudwatch/home?region=${REGION}#/gen-ai-observability/agent-core/agents"
+
+echo "X-Ray Traces (spring-genai):"
+echo "  https://${REGION}.console.aws.amazon.com/xray/home?region=${REGION}#/traces?filter=service%28%22spring-genai%22%29"
+
+echo "CloudWatch Logs (container + OTEL):"
+echo "  https://${REGION}.console.aws.amazon.com/cloudwatch/home?region=${REGION}#logsV2:log-groups/log-group/${LOG_GROUP}"
+```
 
 ## API Contract
 
 | Endpoint | Method | Purpose |
-|----------|--------|---------|
+| --- | --- | --- |
 | `/invocations` | POST | Chat interaction (SSE streaming) |
 | `/ping` | GET | Health check (delegates to Spring Actuator) |
 
@@ -253,7 +289,7 @@ aws bedrock-agentcore-control get-agent-runtime \
 **Headers injected by AgentCore:**
 
 | Header | Purpose |
-|--------|---------|
+| --- | --- |
 | `Authorization` | `Bearer <JWT>` — user identity extracted for per-user conversation memory |
 | `X-Amzn-Bedrock-AgentCore-Runtime-Session-Id` | Session ID for conversation memory |
 | `X-Amzn-Trace-Id` | X-Ray trace propagation |
@@ -279,13 +315,13 @@ Returns `Healthy` when Spring Actuator health is UP, `Unhealthy` otherwise.
 Key properties in `application.properties`:
 
 | Property | Default | Override |
-|----------|---------|---------|
-| OTLP endpoint | `http://localhost:4318` | `OTEL_EXPORTER_OTLP_ENDPOINT` env var |
+| --- | --- | --- |
+| OTLP endpoint (local) | `http://localhost:4318` | `management.opentelemetry.tracing.export.otlp.endpoint` in `application-local.properties` |
 | Bedrock region | `us-east-1` | `spring.ai.bedrock.aws.region` |
-| Model | Claude 3.5 Sonnet v2 | `spring.ai.bedrock.converse.chat.options.model` |
+| Model | Amazon Nova Lite | `spring.ai.bedrock.converse.chat.options.model` |
 | Temperature | 0.7 | `spring.ai.bedrock.converse.chat.options.temperature` |
 | Max tokens | 1024 | `spring.ai.bedrock.converse.chat.options.max-tokens` |
-| Trace sampling | 100% | `management.tracing.sampling.probability` |
+| Trace sampling | 5% (local) / 100% (production) | `management.tracing.sampling.probability` — 100% is suitable for testing with low traffic only; reduce for production at scale |
 
 ## Teardown
 

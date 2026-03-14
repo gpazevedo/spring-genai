@@ -42,7 +42,7 @@ fi
 
 # Generate unique suffix for ECR repository
 ECR_REPO_NAME="spring-genai-${ACCOUNT_ID}"
-IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/spring-genai:latest"
+IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${ECR_REPO_NAME}:latest"
 
 echo "📦 ECR Repository: ${ECR_REPO_NAME}"
 echo "🏷️  Image URI: ${IMAGE_URI}"

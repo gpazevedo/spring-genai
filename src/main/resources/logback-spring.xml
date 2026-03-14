@@ -8,6 +8,12 @@
         <captureMdcAttributes>*</captureMdcAttributes>
     </appender>
 
+    <!-- Suppress Tomcat 400 errors from AgentCore TLS probe connections -->
+    <logger name="org.apache.coyote.http11.Http11Processor" level="OFF"/>
+
+    <!-- Suppress Micrometer OTLP metrics registry errors (metrics export is disabled) -->
+    <logger name="io.micrometer.registry.otlp.OtlpMeterRegistry" level="OFF"/>
+
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>
         <appender-ref ref="OTEL"/>

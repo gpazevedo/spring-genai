@@ -22,3 +22,9 @@ variable "xray_indexing_percentage" {
   type        = number
   default     = 100
 }
+
+variable "runtime_id_suffix" {
+  description = "Random suffix AgentCore appends to runtime_name to form runtime_id. Get from: terraform output runtime_id"
+  type        = string
+  default     = "uoAiAY2qWz"
+}
