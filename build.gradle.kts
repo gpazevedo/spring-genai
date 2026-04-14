@@ -1,6 +1,6 @@
 plugins {
 	java
-	id("org.springframework.boot") version "4.0.3"
+	id("org.springframework.boot") version "4.0.5"
 	id("io.spring.dependency-management") version "1.1.7"
 }
 
@@ -29,6 +29,7 @@ dependencies {
 	implementation("org.springframework.ai:spring-ai-advisors-vector-store")
 	implementation("org.springframework.ai:spring-ai-starter-model-bedrock")
 	implementation("org.springframework.ai:spring-ai-starter-model-bedrock-converse")
+	implementation("software.amazon.awssdk:bedrockagentcore:2.40.3")
 	testImplementation("org.springframework.boot:spring-boot-starter-actuator-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-opentelemetry-test")
 	testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
