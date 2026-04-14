@@ -3,12 +3,16 @@ package com.gpazevedo.spring_genai;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
+import software.amazon.awssdk.awscore.exception.AwsServiceException;
+import software.amazon.awssdk.core.exception.SdkClientException;
 
 @RestController
 public class InvocationsController {
@@ -31,6 +35,10 @@ public class InvocationsController {
             @RequestHeader(value = "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id",
                     required = false) String sessionId) {
 
+        if (request.input() == null || request.input().prompt() == null || request.input().prompt().isBlank()) {
+            throw new IllegalArgumentException("input.prompt must not be blank");
+        }
+
         var prompt = chatClient.prompt()
                 .user(request.input().prompt());
 
@@ -42,7 +50,13 @@ public class InvocationsController {
             prompt.advisors(a -> a.param(ChatMemory.CONVERSATION_ID, conversationId));
         }
 
-        return prompt.stream().content();
+        return prompt.stream().content()
+                .onErrorMap(AwsServiceException.class, ex ->
+                        new ResponseStatusException(HttpStatus.valueOf(ex.statusCode()),
+                                ex.awsErrorDetails().errorMessage()))
+                .onErrorMap(SdkClientException.class, ex ->
+                        new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                                "Upstream AWS service unreachable"));
     }
 
     private String extractUserId(String authorization) {
