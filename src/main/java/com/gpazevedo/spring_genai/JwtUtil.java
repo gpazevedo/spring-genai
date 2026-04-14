@@ -1,5 +1,6 @@
 package com.gpazevedo.spring_genai;
 
+import java.text.ParseException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -35,7 +36,7 @@ public class JwtUtil {
             
             return claims.getSubject();
 
-        } catch (Exception e) {
+        } catch (ParseException e) {
             logger.warn("Failed to parse JWT token: {}", e.getMessage());
             return null;
         }
